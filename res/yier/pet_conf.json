@@ -1,0 +1,44 @@
+{
+  "width": 480,
+  "height": 480,
+  "scale": 0.204,
+  "interact_speed": 0.02,
+
+  "default": "default",
+  "up": "default",
+  "down": "default",
+  "left": "default",
+  "right": "default",
+  "drag": "default",
+  "fall": "default",
+  "prefall": "default",
+  "on_floor": "default",
+  "patpat": "interact2",
+
+  "follow_main_x": false,
+  "follow_main_y": false,
+  "anchor_to_main": [0, 0],
+
+  "random_act": [
+    {
+      "name": "default",
+      "act_list": ["default"],
+      "act_prob": 0.85,
+      "act_type": [0, 10000]
+    },
+    {
+      "name": "interact2",
+      "act_list": ["interact2"],
+      "act_prob": 0.15,
+      "act_type": [0, 5000]
+    },
+    {
+      "name": "onfloor",
+      "act_list": ["default"],
+      "act_prob": 0,
+      "act_type": [0, 10000]
+    }
+  ],
+
+  "main_interact": {}
+}

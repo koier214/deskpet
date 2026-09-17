@@ -1,0 +1,13 @@
+config.json
+__pycache__/
+*.pyc
+res/*/tasks.json
+res/*/usage.json
+*.tmp
+
+# 以下文件只在本地保留，不上传到仓库（不影响程序运行）
+AGENTS.md
+功能说明.md
+coord_picker.py
+docs/
+tests/

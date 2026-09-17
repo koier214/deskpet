@@ -1,0 +1,12 @@
+{
+  "default": {
+    "images": "default",
+    "act_num": 1,
+    "frame_refresh": 0.08
+  },
+  "interact2": {
+    "images": "interact2",
+    "act_num": 1,
+    "frame_refresh": 0.077
+  }
+}
