@@ -12,15 +12,22 @@ import argparse
 import json
 import os
 import sys
+import time
 
 from core import settings
 
 DEFAULTS = {
     'pet_name': 'yier',
     'identity': 'yier',
-    'peer': None,                    # None = 按 PEER_MAP 自动推导
+    'peer': None,                    # None = 按 PEER_MAP 自动推导（v2 起只用于显示，不再决定跟谁聊）
     'ws_url': 'ws://localhost:8765',
-    'token': '',
+    'token': '',                     # 旧的共享密钥：保留读取（老文件不报未知键），v2 起不再参与连接
+    # ---- 账号模式（2026-09-22 起）----
+    'uid': '',                       # 账号编号，登录成功后服务器给；只用于分辨"谁说的"
+    'phone': '',                     # 登录名
+    'nickname': '',                  # 显示名，可以留空
+    'pass_token': '',                # 通行证：登录成功后服务器发的一张票。密码**不落盘**
+    'peers': [],                     # 已连接的会话列表（服务器给的最新一版）
 }
 
 # identity -> peer 的推导表。加第三个角色时往这里加一行即可
@@ -29,6 +36,12 @@ PEER_MAP = {'yier': 'bubu', 'bubu': 'yier'}
 
 class ConfigError(Exception):
     """配置错误：由 main.py 捕获后打印并 sys.exit(2)"""
+
+
+# 写盘重试：Windows 上杀软/索引服务会短暂占住刚写完的文件，os.replace 偶发 ACCESS_DENIED。
+# 和 core/task_store.py 用的是同一套手法与同一组数字。
+REPLACE_ATTEMPTS = 5
+REPLACE_RETRY_DELAY_S = 0.05
 
 
 def build_arg_parser():
@@ -103,6 +116,13 @@ def _validate(cfg, path):
         raise ConfigError(f'配置项 peer 必须是字符串或留空，实际是 {cfg["peer"]!r}（{path}）')
     if cfg['token'] is not None and not isinstance(cfg['token'], str):
         raise ConfigError(f'配置项 token 必须是字符串或留空，实际是 {cfg["token"]!r}（{path}）')
+    # 账号相关的几项都可以留空：没登录过就是空串，UI 会引导去登录
+    for key in ('uid', 'phone', 'nickname', 'pass_token'):
+        if cfg[key] is not None and not isinstance(cfg[key], str):
+            raise ConfigError(f'配置项 {key} 必须是字符串或留空，实际是 {cfg[key]!r}（{path}）')
+    if cfg['peers'] is not None and not isinstance(cfg['peers'], list):
+        raise ConfigError(
+            f'配置项 peers 必须是列表，实际是 {type(cfg["peers"]).__name__}（{path}）')
 
 
 def _resolve_peer(cfg):
@@ -141,12 +161,64 @@ def load_config(argv, config_path=None):
     cfg['peer'] = _resolve_peer(cfg)
     if cfg['token'] is None:           # JSON 里写 null 等同「不设密钥」
         cfg['token'] = ''
+    for key in ('uid', 'phone', 'nickname', 'pass_token'):
+        if cfg[key] is None:
+            cfg[key] = ''
+    # peers 是列表，**必须复制一份**：dict(DEFAULTS) 只是浅拷贝，
+    # 直接往里塞而不换对象的话，DEFAULTS 里那个列表会被就地改写，
+    # 下一次 load_config 读到的"默认值"就成了上一次的会话列表
+    cfg['peers'] = list(cfg['peers'] or [])
     return cfg
 
 
 def apply_to_settings(cfg):
-    """把配置写回 settings 模块变量 —— 全项目唯一修改这四个配置项的地方"""
+    """把配置写回 settings 模块变量 —— 全项目唯一修改这些配置项的地方"""
     settings.WS_URL = cfg['ws_url']
     settings.IDENTITY = cfg['identity']
     settings.PEER = cfg['peer']
     settings.WS_TOKEN = cfg['token']
+    settings.UID = cfg['uid']
+    settings.PHONE = cfg['phone']
+    settings.NICKNAME = cfg['nickname']
+    settings.PASS_TOKEN = cfg['pass_token']
+    settings.PEERS = list(cfg['peers'])
+
+
+def save_config(partial, path=None):
+    """把若干配置项写回 config.json。
+
+    三条规矩，都是因为这个文件**用户自己也会打开手改**：
+      1. 只覆盖传进来的键；文件里原有的其它键（包括我们不认识的）**原样留着**，
+         绝不替用户删东西。
+      2. 先写 .tmp 再 os.replace，不直接覆盖目标文件（半截文件会让下次启动直接崩）。
+      3. 文件坏了（不是合法 JSON）也照写 —— 写下去正好把它修回来，不该反过来拦住存盘。
+
+    partial 只放要改的键，例如 {'pass_token': ...}；不用凑齐 DEFAULTS。
+    """
+    target = path or default_config_path()
+    current = {}
+    if os.path.exists(target):
+        try:
+            with open(target, 'r', encoding='utf-8-sig') as f:
+                raw = json.load(f)
+            if isinstance(raw, dict):
+                current = raw
+        except (json.JSONDecodeError, OSError, ValueError):
+            current = {}
+    current.update(partial)
+
+    parent = os.path.dirname(os.path.abspath(target))
+    if parent:
+        os.makedirs(parent, exist_ok=True)
+    tmp = target + '.tmp'
+    payload = json.dumps(current, ensure_ascii=False, indent=2)
+    for attempt in range(REPLACE_ATTEMPTS):
+        try:
+            with open(tmp, 'w', encoding='utf-8') as f:
+                f.write(payload)
+            os.replace(tmp, target)
+            return
+        except PermissionError:
+            if attempt == REPLACE_ATTEMPTS - 1:
+                raise
+            time.sleep(REPLACE_RETRY_DELAY_S)

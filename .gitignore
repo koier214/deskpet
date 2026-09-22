@@ -3,6 +3,7 @@ __pycache__/
 *.pyc
 res/*/tasks.json
 res/*/usage.json
+res/*/fixed_tasks.json
 *.tmp
 build/
 dist/

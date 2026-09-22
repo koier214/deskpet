@@ -21,9 +21,18 @@ from datetime import date, datetime
 from PySide6.QtCore import QCoreApplication, QObject, QTimer, Signal
 
 from core.task_store import load_data, save_data
+from logic.task_filters import (
+    date_states,
+    is_done_today as _is_done_today,
+    is_overdue,
+    sort_overdue,
+    today_str as _today_str,
+    valid_date,
+)
 from logic.task_timer import TaskTimer
 
 FLUSH_INTERVAL_MS = 15000   # 纯 tick 的节流窗口；结构/状态变更一律立即写
+DAY_CHECK_MS = 60000        # 跨零点检查周期；睡眠/唤醒/改系统时间都能覆盖
 
 # 每条任务必须齐备的键与默认值（手工编辑过的旧 JSON 可能缺）
 _FIELD_DEFAULTS = (
@@ -35,19 +44,14 @@ _FIELD_DEFAULTS = (
     ('status', 'todo'),
     ('due_date', None),
     ('done_at', None),
+    ('fixed', False),
+    ('rule_id', None),
 )
 
 
-def is_done_today(task):
-    """该任务算不算「今天完成」：以 done_at 时间戳为准
-
-    旧数据/手工编辑的数据没有 done_at（或类型不对）一律不算——
-    几天前完成的任务不该一直挂在头顶的已完成区里。
-    """
-    ts = task.get('done_at')
-    if isinstance(ts, bool) or not isinstance(ts, (int, float)):
-        return False
-    return datetime.fromtimestamp(ts).date() == date.today()
+def is_done_today(task, now=None):
+    """该任务算不算「今天完成」——口径在 logic/task_filters.py，这里只转发"""
+    return _is_done_today(task, now)
 
 # 单实例注册表：同一角色同时存在两个 service 会导致双份内存副本、
 # 两个表同时给同一任务倒数、写盘互相覆盖，所以直接硬失败而不是警告
@@ -56,13 +60,7 @@ _INSTANCES = {}
 
 def _valid_date(value):
     """合法 'YYYY-MM-DD' 字符串原样返回，其余（含 None/坏格式）归 None（未安排）"""
-    if not isinstance(value, str) or len(value) != 10:
-        return None
-    try:
-        datetime.strptime(value, '%Y-%m-%d')
-    except ValueError:
-        return None
-    return value
+    return valid_date(value)
 
 
 class TaskService(QObject):
@@ -73,9 +71,11 @@ class TaskService(QObject):
     sig_task_updated = Signal(str)    # task_id：done/text/timer_*/status 任一变化
     sig_tick = Signal(str, int)       # task_id, remaining_s（每秒，高频热路径）
     sig_finished = Signal(str, str)   # task_id, task_text（归零，供 PetWindow 弹提醒）
+    sig_day_changed = Signal(str)     # 新的今天 'YYYY-MM-DD'：跨零点后视图要重排分组
 
     def __init__(self, pet_name='yier', *, tick_interval_ms=1000,
-                 flush_interval_ms=FLUSH_INTERVAL_MS):
+                 flush_interval_ms=FLUSH_INTERVAL_MS, now_fn=None,
+                 day_check_ms=DAY_CHECK_MS):
         if pet_name in _INSTANCES:
             raise RuntimeError(
                 f'TaskService({pet_name}) 已存在，请复用同一实例')
@@ -83,6 +83,8 @@ class TaskService(QObject):
         _INSTANCES[pet_name] = self
 
         self.pet_name = pet_name
+        # 「现在」的唯一入口：默认系统时间，测试注入固定日期就能测跨天
+        self._now_fn = now_fn or (lambda: datetime.now())
         # 整个 dict（含 pomodoro 等非 tasks 的顶层键）原样持有，
         # 写盘时也整个写回 —— 绝不能重构成 {"tasks": ...} 否则那些键会被写丢
         self._data = load_data(pet_name)
@@ -98,6 +100,13 @@ class TaskService(QObject):
         self._flush_timer.setSingleShot(True)
         self._flush_timer.setInterval(flush_interval_ms)
         self._flush_timer.timeout.connect(self.flush)
+
+        # 跨零点：低频轮询而不是零点定时器，睡眠/唤醒/改系统时间都能覆盖
+        self._today = self.today_str()
+        self._day_timer = QTimer(self)
+        self._day_timer.setInterval(day_check_ms)
+        self._day_timer.timeout.connect(self._check_day_change)
+        self._day_timer.start()
 
         self._normalize()
 
@@ -137,10 +146,33 @@ class TaskService(QObject):
         """未安排任务（due_date 为 None）"""
         return [t for t in self._data['tasks'] if not t.get('due_date')]
 
+    def now(self):
+        """「现在」的唯一来源（可注入）。
+
+        视图要拿日期做派生判断（逾期、气泡分区）时一律走它，
+        不要再各自调 date.today() —— 那样测试里就没法把时间钉住。
+        """
+        return self._now_fn()
+
+    def today_str(self):
+        """今天的 'YYYY-MM-DD'；所有视图都用它，不再各自调 date.today()"""
+        return _today_str(self._now_fn())
+
     def done_today(self):
         """今天完成的任务（保持插入序），头顶气泡已完成区用"""
+        today = self._now_fn()
         return [t for t in self._data['tasks']
-                if t.get('done') and is_done_today(t)]
+                if t.get('done') and is_done_today(t, today)]
+
+    def overdue(self):
+        """逾期未完成的任务，欠得最久的排最前；逾期是派生状态，不落盘"""
+        today = self._now_fn()
+        return sort_overdue(
+            [t for t in self._data['tasks'] if is_overdue(t, today)], today)
+
+    def date_states(self):
+        """日期 → 日历三态（'overdue' / 'open' / 'done'），日历标记用"""
+        return date_states(self._data['tasks'], self._now_fn())
 
     def date_counts(self):
         """日期 → 任务条数（日历标记用）"""
@@ -153,10 +185,14 @@ class TaskService(QObject):
 
     # ===================== 任务 CRUD =====================
 
-    def add_task(self, text, minutes=25, due_date=None):
+    def add_task(self, text, minutes=25, due_date=None, *,
+                 fixed=False, rule_id=None):
         """新增任务，返回 id；空白文本返回 None
 
         due_date：'YYYY-MM-DD' 归属某天；None = 未安排；非法值按未安排处理。
+        fixed / rule_id：只有固定任务每天自动追加出来的实例才带（见
+        logic/fixed_task_service.py）；普通任务恒为 False / None。视图只读它们，
+        不参与「今天 / 顺延」的任何判定，删了也不会影响规则本身。
         """
         text = (text or '').strip()
         if not text:
@@ -170,6 +206,8 @@ class TaskService(QObject):
             'timer_total_s': seconds,
             'timer_remaining_s': seconds,
             'due_date': _valid_date(due_date),
+            'fixed': bool(fixed),
+            'rule_id': None if rule_id is None else str(rule_id),
         })
         self._data['tasks'].append(task)
         self._mark_dirty(immediate=True)
@@ -236,6 +274,34 @@ class TaskService(QObject):
         self._mark_dirty(immediate=True)
         self.sig_task_updated.emit(task_id)
         return True
+
+    def move_to_today(self, task_id):
+        """把一条任务改到今天（逾期的单条处置）"""
+        return self.set_due_date(task_id, self.today_str())
+
+    def move_overdue_to_today(self):
+        """把所有逾期任务一次性改到今天，返回条数
+
+        批量只落盘一次，但每条都发 sig_task_updated —— 视图按 id 增量刷新，
+        不需要为批量专门造信号。
+        """
+        ids = [t['id'] for t in self.overdue()]
+        if not ids:
+            return 0
+        today = self.today_str()
+        changed = []
+        for tid in ids:
+            task = self.task(tid)
+            if task is None:
+                continue
+            task['due_date'] = today
+            changed.append(tid)
+        if not changed:
+            return 0
+        self._mark_dirty(immediate=True)
+        for tid in changed:
+            self.sig_task_updated.emit(tid)
+        return len(changed)
 
     def set_text(self, task_id, text):
         """编辑任务文字；空白文本拒绝"""
@@ -343,11 +409,20 @@ class TaskService(QObject):
             self.pause_timer()      # 把读数同步回数据再落盘
         self._timer.stop()
         self._flush_timer.stop()
+        self._day_timer.stop()
         self._dirty = True          # shutdown 必须落盘，即使只有 tick 增量
         self.flush()
         _INSTANCES.pop(self.pet_name, None)
 
     # ===================== 内部 =====================
+
+    def _check_day_change(self):
+        """日期变了才发一次 sig_day_changed；同一天内一次都不发"""
+        today = self.today_str()
+        if today == self._today:
+            return
+        self._today = today
+        self.sig_day_changed.emit(today)
 
     def _recompute_status(self, task):
         """O(1) 派生状态标签，只算被改的那一条（不再全表遍历）"""
@@ -383,6 +458,8 @@ class TaskService(QObject):
                 except (TypeError, ValueError):
                     t[key] = 0
             t['due_date'] = _valid_date(t.get('due_date'))
+            t['fixed'] = bool(t['fixed'])
+            t['rule_id'] = None if t.get('rule_id') is None else str(t['rule_id'])
             if isinstance(t['done_at'], bool) or not isinstance(t['done_at'], (int, float)):
                 t['done_at'] = None
 

@@ -49,10 +49,15 @@ class ChatBubble(QWidget):
         """系统提示（上线/下线/番茄钟等）：暖白卡片，只有正文一行"""
         self._push('notice', None, text, duration_ms)
 
-    def show_chat(self, sender, content, duration_ms=3000):
-        """聊天消息：bubu 棕色 / yier 白色；标题加粗 + 正文换行不加重"""
-        kind = 'peer' if sender == 'bubu' else ('me' if sender == 'yier' else 'notice')
-        self._push(kind, f'来自{sender}的消息', content, duration_ms)
+    def show_chat(self, content, mine=False, who='', duration_ms=3000):
+        """聊天消息：白色=我说的，棕色=对方说的；标题写清楚是谁。
+
+        以前是拿 sender 字符串去比 'yier' / 'bubu' 猜的。账号模式下发送方是
+        **账号编号**（u-xxx），猜不出来，所有消息都会掉进"系统提示"那一档 ——
+        颜色和标题一起失效。所以改成由调用方直接告诉：这条是不是我说的、对方叫什么。
+        """
+        head = '我说' if mine else (f'来自{who}的消息' if who else '对方的消息')
+        self._push('me' if mine else 'peer', head, content, duration_ms)
 
     def clear(self):
         """立刻清掉所有卡片（退出时用）"""
