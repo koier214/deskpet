@@ -1,4 +1,4 @@
-# 一二桌宠（deskpet）
+<img width="1274" height="1022" alt="image" src="https://github.com/user-attachments/assets/bcf57817-8c59-4ac7-bd1f-8891bcad6e87" /># 一二桌宠（deskpet）
 
 基于 PySide6 的极简桌面宠物「一二」：常驻桌面，头顶挂待办气泡，自动统计陪伴时长，
 并可用账号和另一台电脑上的「布布」聊天。
@@ -13,6 +13,8 @@ Windows 用户：**双击 `启动桌宠.bat`**，首次运行会自动安装依�
 pip install -r requirements.txt
 python main.py
 ```
+在config.json文件中添加
+"ws_url": "ws://47.96.99.103:8765"
 
 要求 **Python 3.10 以上**（PySide6 新版的要求）。除 PySide6 外没有其它第三方依赖——
 Qt 本体（含聊天用的 QtWebSockets）由 PySide6 自带，不需要单独安装 Qt。
