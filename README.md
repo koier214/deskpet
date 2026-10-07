@@ -1,4 +1,4 @@
-<img width="1274" height="1022" alt="image" src="https://github.com/user-attachments/assets/bcf57817-8c59-4ac7-bd1f-8891bcad6e87" /># 一二桌宠（deskpet）
+
 
 基于 PySide6 的极简桌面宠物「一二」：常驻桌面，头顶挂待办气泡，自动统计陪伴时长，
 并可用账号和另一台电脑上的「布布」聊天。
