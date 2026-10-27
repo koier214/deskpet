@@ -57,6 +57,10 @@ class HistoryWindow(QWidget):
                 m.get('sender', ''), m.get('content', ''), m.get('timestamp'))
         self._scroll_to_bottom()
 
+    def set_identity(self, identity):
+        """告诉它"我是谁" —— 账号模式里"我"是服务器给的 uid，不再是写死的 yier"""
+        self._identity = identity
+
     def append_message(self, sender, content, timestamp=None):
         """实时消息追加到底部（从底部弹出），并滚到最新"""
         self._text.append(self._make_line(sender, content, timestamp))

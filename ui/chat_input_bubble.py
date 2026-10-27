@@ -1,4 +1,4 @@
-"""聊天输入气泡 —— Alt+Q 唤出，回车发送，隐藏时草稿暂存
+"""聊天输入气泡 —— 右键「快速聊天」唤出，回车发送，隐藏时草稿暂存
 
 与 ChatBubble 的区别：本气泡需要键盘焦点（要打字），
 所以不加 WA_ShowWithoutActivating，显示时主动激活窗口。
@@ -49,7 +49,7 @@ class ChatInputBubble(QWidget):
             f'border: none; font-size: 12px; font-weight: bold; color: {theme.ACCENT_DARK};')
 
         self._edit = QLineEdit()
-        self._edit.setPlaceholderText('输入消息，回车发送（Alt+Q 关闭）')
+        self._edit.setPlaceholderText('输入消息，回车发送')
         self._edit.setStyleSheet(
             f'border: 1px solid {theme.CARD_BORDER}; border-radius: 6px; '
             f'font-size: 12px; color: {theme.TEXT}; padding: 3px; background: {theme.BG};'
@@ -62,6 +62,10 @@ class ChatInputBubble(QWidget):
     def focus_edit(self):
         """显示后把键盘焦点交给输入框，可立即打字"""
         self._edit.setFocus()
+
+    def set_peer(self, peer):
+        """换个显示名。账号模式里"对方是谁"由会话决定，不再是写死的 yier/bubu"""
+        self._title.setText(f'发给 {peer}：')
 
     def _on_return(self):
         """回车：非空则发信号，然后清空输入框（保持打开，可连发）"""

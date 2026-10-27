@@ -36,6 +36,32 @@ ALERT_HEAD_BG = ACCENT_SOFT   # 唯一强调色：需要你动手的那块标题
 BUBBLE_BG = 'rgba(255, 252, 247, 0.94)'
 BUBBLE_BORDER = '#E3D5C3'
 
+# 二维码框选遮罩与结果窗口；配色仍统一从主题取值。
+QR_MASK = '#80000000'
+QR_HINT_QSS = (f'background: {TEXT}; color: {CARD}; border-radius: 8px; '
+               'padding: 10px 18px; font-size: 15px;')
+QR_DIALOG_QSS = f'''
+    QDialog#qrResult {{ background: {BG}; }}
+    QLabel {{ color: {TEXT}; font-size: 13px; }}
+    QLabel#qrTitle {{ font-size: 17px; font-weight: bold; color: {ACCENT_DARK}; }}
+    QPlainTextEdit, QComboBox {{
+        background: {CARD}; color: {TEXT}; border: 1px solid {CARD_BORDER};
+        border-radius: 8px; padding: 8px; font-size: 13px;
+        selection-background-color: {ACCENT}; selection-color: {CARD};
+    }}
+    QComboBox QAbstractItemView {{ background: {CARD}; color: {TEXT}; }}
+    QPushButton {{
+        background: {CARD}; color: {TEXT}; border: 1px solid {CARD_BORDER};
+        border-radius: 8px; padding: 8px 12px; font-size: 12px;
+    }}
+    QPushButton:hover {{ background: {ACCENT_SOFT}; border-color: {ACCENT}; }}
+    QPushButton#qrOpen {{ background: {ACCENT}; color: {CARD}; }}
+    QPushButton#qrOpen:hover {{ background: {ACCENT_DARK}; }}
+    QPushButton:disabled, QPushButton#qrOpen:disabled {{
+        color: {TEXT_DIM}; background: {BG}; border-color: {CARD_BORDER};
+    }}
+'''
+
 # 语义色：状态不改含义，只统一圆角与中性灰的暖调
 DONE_GREEN = '#2E7D32'
 DONE_GREEN_BG = '#E8F5E9'

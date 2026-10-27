@@ -77,8 +77,11 @@ class PetWindow(QWidget):
         self._chat_bubble = None
         self._task_bubble_suspended = False   # 待办气泡是否因聊天气泡临时隐藏
 
-        # ---- 聊天输入气泡 + 全局热键 ----
+        # ---- 聊天输入气泡 ----
         self._chat_input = None
+
+        # ---- 二维码扫描（首次按 Alt+Q 或点菜单时创建） ----
+        self._qr_scanner = None
 
         # ---- 常驻聊天窗口（懒加载） ----
         self._chat_window = None
@@ -95,7 +98,7 @@ class PetWindow(QWidget):
         # ---- WebSocket 通信（QWebSocket 异步，无需子线程） ----
         self._init_ws()
 
-        # ---- 聊天输入气泡 + Alt+Q 全局热键 ----
+        # ---- 聊天输入气泡 + 二维码扫描全局热键 ----
         self._init_chat_input()
 
     # ===================== 窗口设置 =====================
@@ -222,7 +225,10 @@ class PetWindow(QWidget):
         bubble_text = '关闭待办气泡' if self._task_bubble else '显示待办气泡'
         bubble_action = menu.addAction(bubble_text)
         chat_action = menu.addAction('聊天')
+        input_action = menu.addAction('快速聊天')
         history_action = menu.addAction('聊天记录')
+        menu.addSeparator()
+        qr_action = menu.addAction('扫描二维码 (Alt+Q)')
         menu.addSeparator()
         exit_action = menu.addAction('退出 (Exit)')
         chosen = menu.exec_(QCursor.pos())
@@ -232,8 +238,12 @@ class PetWindow(QWidget):
             self._toggle_task_bubble()
         elif chosen == chat_action:
             self._toggle_chat_window()
+        elif chosen == input_action:
+            self._toggle_chat_input()
         elif chosen == history_action:
             self._toggle_history_window()
+        elif chosen == qr_action:
+            self._toggle_qr_scan()
         elif chosen == exit_action:
             self._quit()
 
@@ -319,6 +329,9 @@ class PetWindow(QWidget):
         """登录成功：记住自己是谁，把连接码交给账号页，并弹一句告诉用户"""
         self._login_info = dict(info)
         self._peers = list(info.get('peers') or [])
+        # 让靠"我是谁"分辨左右的那两个窗口改用账号编号（不再是写死的 yier）
+        if self._history_window is not None:
+            self._history_window.set_identity(info.get('uid', ''))
         self._save_account_cfg()
         self._push_account()
         self._show_chat_message(f"已登录，我的连接码是 {info.get('code', '')}")
@@ -535,13 +548,20 @@ class PetWindow(QWidget):
 
     # ===================== 聊天输入气泡 =====================
     def _init_chat_input(self):
-        """创建输入气泡 + 注册 Alt+Q 系统级全局热键"""
+        """创建输入气泡；Alt+Q 改为扫描，输入气泡保留在右键「快速聊天」。"""
         self._chat_input = ChatInputBubble(peer=settings.PEER)
         self._chat_input.sig_send.connect(self._on_input_send)
-        # Alt+Q：任何软件里按都能切换输入气泡；parent 传自己，
+        # Alt+Q：任何软件里按都能扫描二维码；parent 传自己，
         # 注册失败降级成应用内快捷键时 QShortcut 要挂在窗口上
         self._hotkey = GlobalHotkey('q', parent=self)
-        self._hotkey.triggered.connect(self._toggle_chat_input)
+        self._hotkey.triggered.connect(self._toggle_qr_scan)
+
+    def _toggle_qr_scan(self):
+        """按需创建屏幕二维码扫描器，不影响聊天草稿或待办状态。"""
+        if self._qr_scanner is None:
+            from ui.qr_scanner import QrScanner
+            self._qr_scanner = QrScanner(self)
+        self._qr_scanner.toggle()
 
     def _on_input_send(self, text):
         """回车发送到**当前会话**；聊天窗/记录窗开着则把"我说的话"也追加进去"""
@@ -560,7 +580,10 @@ class PetWindow(QWidget):
             self._history_window.append_message(my_uid, text, time.time())
 
     def _toggle_chat_input(self):
-        """Alt+Q：开/关输入气泡，隐藏时草稿暂存；与常驻聊天窗互斥"""
+        """右键「快速聊天」：开/关输入气泡，隐藏时草稿暂存；与常驻聊天窗互斥"""
+        # 气泡标题写"发给 谁" —— 对方是谁由会话决定，顺手刷新一下
+        peer_name = self._peer_name(self._current_pair) if self._ensure_current_pair() else '对方'
+        self._chat_input.set_peer(peer_name)
         if self._chat_input.isVisible():
             self._chat_input.hide()
             self._restore_task_bubble_if_clear()
@@ -586,7 +609,7 @@ class PetWindow(QWidget):
 
     # ===================== 常驻聊天窗口 =====================
     def _toggle_chat_window(self):
-        """右键"聊天"：开关常驻聊天窗，打开时重新拉历史；与 Alt+Q 输入气泡互斥"""
+        """右键"聊天"：开关常驻聊天窗，打开时重新拉历史；与快速聊天输入气泡互斥"""
         self._ensure_current_pair()      # 只有一个人就直接选他，别让打字白打
         self._ensure_chat_window()
         if self._chat_window.isVisible():
@@ -636,7 +659,8 @@ class PetWindow(QWidget):
     def _toggle_history_window(self):
         """右键"聊天记录"：开关历史记录窗，打开时重新拉历史"""
         if self._history_window is None:
-            self._history_window = HistoryWindow(identity=settings.IDENTITY)
+            # identity 传账号编号：窗口靠它把"我发的"和"对方发的"分开
+            self._history_window = HistoryWindow(identity=self._login_info.get('uid', ''))
         if self._history_window.isVisible():
             self._history_window.hide()
         else:
@@ -661,6 +685,8 @@ class PetWindow(QWidget):
     # ===================== 退出清理 =====================
     def _quit(self):
         self._hotkey.unregister()
+        if self._qr_scanner is not None:
+            self._qr_scanner.shutdown()
 
         # 尽早落盘：后面两个线程的 wait(3000) 万一卡住也不丢数据
         self._task_service.shutdown()
